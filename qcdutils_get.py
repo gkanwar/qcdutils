@@ -383,7 +383,7 @@ class GaugeMDP(QCDFormat):
         if len(data) != self.base_size:
             raise RuntimeError, "invalid data size"
         return self.file.write(self.pack(data))
-    def convert_from(self,other,target_precision = None):
+    def convert_from(self,other,target_precision = None,timeslice = None):
         (precision,nt,nx,ny,nz) = other.read_header()
         notify('  (precision: %s, size: %ix%ix%ix%i)' % (precision,nt,nx,ny,nz))
         self.write_header(target_precision or precision,nt,nx,ny,nz)
@@ -399,7 +399,7 @@ class GaugeMDP(QCDFormat):
 
 
 class GaugeMDPSplit(GaugeMDP):
-    def convert_from(self,other,target_precision = None):
+    def convert_from(self,other,target_precision = None,timeslice = None):
         (precision,nt,nx,ny,nz) = other.read_header()
         notify('  (precision: %s, size: %ix%ix%ix%i)' % (precision,nt,nx,ny,nz))
         pbar = ProgressBar(widgets = default_widgets , maxval = nt).start()
@@ -465,7 +465,7 @@ class PropagatorMDP(QCDFormat):
         if len(data) != self.base_size:
             raise RuntimeError, "invalid data size"
         return self.file.write(self.pack(data))
-    def convert_from(self,other,target_precision = None):
+    def convert_from(self,other,target_precision = None,timeslice = None):
         (precision,nt,nx,ny,nz) = other.read_header()
         notify('  (precision: %s, size: %ix%ix%ix%i)' % (precision,nt,nx,ny,nz))
         self.write_header(target_precision or precision,nt,nx,ny,nz)
@@ -506,7 +506,7 @@ class PropagatorMDPSplit(QCDFormat):
         if len(data) != self.base_size:
             raise RuntimeError, "invalid data size"
         return self.file.write(self.pack(data))
-    def convert_from(self,other,target_precision = None):
+    def convert_from(self,other,target_precision = None,timeslice = None):
         (precision,nt,nx,ny,nz) = other.read_header()
         notify('  (precision: %s, size: %ix%ix%ix%i)' % (precision,nt,nx,ny,nz))
         pbar = ProgressBar(widgets = default_widgets , maxval = nt).start()
@@ -562,21 +562,28 @@ class PropagatorNumpy(QCDFormat):
         assert "precision" in self.obj
         assert "data" in self.obj
         cPickle.dump(self.obj, self.file)
-    def convert_from(self,other,target_precision = None):
+    def convert_from(self,other,target_precision = None,timeslice = None):
         print "PropagatorNumpy converting..."
         (precision,nt,nx,ny,nz) = other.read_header()
+        if timeslice is not None: nt = 1
         notify(' (precision: %s, size:%ix%ix%ix%i)' % (precision,nt,nx,ny,nz))
         self.write_header(target_precision or precision,nt,nx,ny,nz)
-        pbar = ProgressBar(widgets = default_widgets, maxval = self.size[0]).start()
-        for t in xrange(nt):
+        pbar = ProgressBar(widgets = default_widgets, maxval = nt).start()
+        for tind in xrange(nt):
+            if timeslice:
+                t = timeslice
+            else:
+                t = tind
             for x in xrange(nx):
                 for y in xrange(ny):
                     for z in xrange(nz):
+                        print (t,x,y,z)
                         data = other.read_data(t,x,y,z)
                         # Convert floats into numpy complex type
-                        self.obj["data"][t,x,y,z,:] = [
+                        self.obj["data"][tind,x,y,z,:] = [
                             np.complex(data[2*i], data[2*i+1]) for i in xrange(len(data)/2)]
-            pbar.update(t)
+            pbar.update(tind)
+            if timeslice: break
         self.flush_data()
         pbar.finish()
         
@@ -650,7 +657,7 @@ class GaugeILDG(QCDFormat):
         if len(data) != self.base_size:
             raise RuntimeError, "invalid data size"
         return self.file.write(self.pack(data))
-    def convert_from(self,other,target_precision = None):
+    def convert_from(self,other,target_precision = None,timeslice = None):
         (precision,nt,nx,ny,nz) = other.read_header()
         notify('  (precision: %s, size: %ix%ix%ix%i)' % (precision,nt,nx,ny,nz))
         self.write_header(target_precision or precision,nt,nx,ny,nz)
@@ -777,7 +784,7 @@ class GaugeMILC(QCDFormat):
         if len(data) != self.base_size:
             raise RuntimeError, "invalid data size"
         return self.file.write(self.pack(data))
-    def convert_from(self,other,target_precision = None):
+    def convert_from(self,other,target_precision = None,timeslice = None):
         (precision,nt,nx,ny,nz) = other.read_header()
         notify('  (precision: %s, size: %ix%ix%ix%i)' % (precision,nt,nx,ny,nz))
         self.write_header(target_precision or precision,nt,nx,ny,nz)
@@ -856,7 +863,8 @@ OPTIONS = {
 
 ALL = (GaugeMDP,GaugeMILC,GaugeNERSC,GaugeILDG,GaugeSCIDAC,PropagatorMDP,PropagatorSCIDAC,PropagatorNumpy)
 
-def universal_converter(path,target,precision,convert=True):
+def universal_converter(path,target,precision,convert=True,
+                        timeslice=False):
     filenames = [f for f in glob.glob(path) \
                      if not os.path.basename(f).startswith(CATALOG)]
     if not filenames:
@@ -877,7 +885,7 @@ def universal_converter(path,target,precision,convert=True):
                     else:
                         dest = option[0](ofilename)
                         source = formatter(filename)
-                        dest.convert_from(source,precision)
+                        dest.convert_from(source,precision,timeslice)
                         register_file(ofilename)
                 else: # just pretend and get header info
                     info = formatter(filename).read_header()
@@ -1364,6 +1372,8 @@ def main():
     parser.add_option("-n", "--noprogressbar",dest = 'noprogressbar',default = False,
                       action = 'store_true',
                       help = "disable progress bar")
+    parser.add_option("-s", "--timeslice", dest = 'timeslice', default = None,
+                      help = "specify a timeslice to select (Numpy only)")
     (options, args) = parser.parse_args()
 
     ### disable progress bar if necessary
@@ -1427,7 +1437,7 @@ def main():
                    (conversion_path, conversion_path, options.convert))
         precision = 'f' if options.float_precision else \
             'd' if options.double_precision else None
-        universal_converter(conversion_path,options.convert,precision)
+        universal_converter(conversion_path,options.convert,precision,options.timeslice)
     elif infoonly:
         universal_converter(conversion_path,options.convert,
                             precision=None,convert=False)
