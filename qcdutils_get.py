@@ -577,7 +577,7 @@ class PropagatorNumpy(QCDFormat):
             for x in xrange(nx):
                 for y in xrange(ny):
                     for z in xrange(nz):
-                        print (t,x,y,z)
+                        # print (t,x,y,z)
                         data = other.read_data(t,x,y,z)
                         # Convert floats into numpy complex type
                         self.obj["data"][tind,x,y,z,:] = [
@@ -865,6 +865,7 @@ ALL = (GaugeMDP,GaugeMILC,GaugeNERSC,GaugeILDG,GaugeSCIDAC,PropagatorMDP,Propaga
 
 def universal_converter(path,target,precision,convert=True,
                         timeslice=False):
+    print "universal_converter timeslice", timeslice
     filenames = [f for f in glob.glob(path) \
                      if not os.path.basename(f).startswith(CATALOG)]
     if not filenames:
@@ -879,7 +880,8 @@ def universal_converter(path,target,precision,convert=True,
                 messages.append('trying to convert %s (%s)' %(filename,formatter.__name__))
             try:
                 if convert:
-                    ofilename = filename+'.'+target
+                    ofilename = filename+(('.slice%d.' % (timeslice,)) if timeslice else '.')+target
+                    print "ofilename", ofilename, timeslice
                     if file_registered(ofilename):
                         notify('file %s already exists and is updated' % ofilename)
                     else:
@@ -1372,7 +1374,7 @@ def main():
     parser.add_option("-n", "--noprogressbar",dest = 'noprogressbar',default = False,
                       action = 'store_true',
                       help = "disable progress bar")
-    parser.add_option("-s", "--timeslice", dest = 'timeslice', default = None,
+    parser.add_option("-s", "--timeslice", dest = 'timeslice', type = int, default = None,
                       help = "specify a timeslice to select (Numpy only)")
     (options, args) = parser.parse_args()
 
@@ -1437,7 +1439,10 @@ def main():
                    (conversion_path, conversion_path, options.convert))
         precision = 'f' if options.float_precision else \
             'd' if options.double_precision else None
-        universal_converter(conversion_path,options.convert,precision,options.timeslice)
+        print "options.timeslice", options.timeslice
+        universal_converter(conversion_path,options.convert,
+                            precision=precision,
+                            timeslice=options.timeslice)
     elif infoonly:
         universal_converter(conversion_path,options.convert,
                             precision=None,convert=False)
