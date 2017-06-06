@@ -588,6 +588,69 @@ class PropagatorNumpy(QCDFormat):
         pbar.finish()
         
 
+class GaugeNumpy(QCDFormat):
+    site_order = [T,X,Y,Z]
+    def __init__(self,filename):
+        self.filename = filename
+        self.base_size = 4*9
+    def read_header(self):
+        self.file = open(self.filename, 'rb')
+        self.obj = cPickle.load(self.file)
+        self.precision = self.obj["precision"]
+        nt,nx,ny,nz,site_len = self.obj["data"].shape
+        self.size = (nt,nx,ny,nz)
+        assert site_len == self.base_size
+        return (self.precision,nt,nx,ny,nz)
+    def write_header(self,precision,nt,nx,ny,nz):
+        # Open file for later write
+        self.file = open(self.filename, 'wb')
+        self.obj = {}
+        self.size = (nt,nx,ny,nz)
+        # Do not actually write to file yet, should pickle all at once
+        self.obj["precision"] = precision
+        self.complex_dtype = np.complex64 if precision == 'f' else np.complex128
+        self.float_dtype = np.float32 if precision == 'f' else np.float64
+        self.obj["data"] = np.zeros((nt,nx,ny,nz,self.base_size),
+                                    dtype=self.complex_dtype)
+    def read_data(self,t,x,y,z):
+        # Assumes obj already loaded
+        data = self.obj["data"][t,x,y,z,:]
+        dreal = data.real.astype(self.float_dtype)
+        dimag = data.imag.astype(self.float_dtype)
+        # Interleaving real/imag seems correct
+        return np.vstack((dreal, dimag)).reshape((-1,), order='F')
+    def write_data(self,data,target_precision = None):
+        assert False, "Numpy does not support streaming write"
+    def flush_data(self):
+        assert "precision" in self.obj
+        assert "data" in self.obj
+        cPickle.dump(self.obj, self.file)
+    def convert_from(self,other,target_precision = None,timeslice = None):
+        print "PropagatorNumpy converting..."
+        (precision,nt,nx,ny,nz) = other.read_header()
+        if timeslice is not None: nt = 1
+        notify(' (precision: %s, size:%ix%ix%ix%i)' % (precision,nt,nx,ny,nz))
+        self.write_header(target_precision or precision,nt,nx,ny,nz)
+        pbar = ProgressBar(widgets = default_widgets, maxval = nt).start()
+        for tind in xrange(nt):
+            if timeslice:
+                t = timeslice
+            else:
+                t = tind
+            for x in xrange(nx):
+                for y in xrange(ny):
+                    for z in xrange(nz):
+                        # print (t,x,y,z)
+                        data = other.read_data(t,x,y,z)
+                        # Convert floats into numpy complex type
+                        self.obj["data"][tind,x,y,z,:] = [
+                            np.complex(data[2*i], data[2*i+1]) for i in xrange(len(data)/2)]
+            pbar.update(tind)
+            if timeslice: break
+        self.flush_data()
+        pbar.finish()
+        
+
 class GaugeILDG(QCDFormat):
     def __init__(self,filename,lfn = 'unkown'):
         self.filename = filename
@@ -854,6 +917,7 @@ class GaugeNERSC(QCDFormat):
 OPTIONS = {
     'mdp':(GaugeMDP,GaugeMDP,GaugeMILC,GaugeNERSC,GaugeILDG,GaugeSCIDAC),
     'ildg':(GaugeILDG,GaugeILDG,GaugeMILC,GaugeNERSC,GaugeMDP,GaugeSCIDAC),
+    'np':(GaugeNumpy,GaugeILDG),
     'prop.mdp':(PropagatorMDP,PropagatorMDP,PropagatorSCIDAC),
     'prop.ildg':(PropagatorSCIDAC,PropagatorSCIDAC,PropagatorMDP),
     'split.mdp':(GaugeMDPSplit,GaugeMDP,GaugeMILC,GaugeNERSC,GaugeILDG,GaugeSCIDAC),
@@ -861,7 +925,7 @@ OPTIONS = {
     'prop.np':(PropagatorNumpy,PropagatorNumpy,PropagatorMDP,PropagatorSCIDAC),
     }
 
-ALL = (GaugeMDP,GaugeMILC,GaugeNERSC,GaugeILDG,GaugeSCIDAC,PropagatorMDP,PropagatorSCIDAC,PropagatorNumpy)
+ALL = (GaugeNumpy,GaugeMDP,GaugeMILC,GaugeNERSC,GaugeILDG,GaugeSCIDAC,PropagatorMDP,PropagatorSCIDAC,PropagatorNumpy)
 
 def universal_converter(path,target,precision,convert=True,
                         timeslice=False):
