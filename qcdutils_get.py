@@ -69,6 +69,9 @@ NOW = datetime.datetime.now()
 MAXBYTES = 1000  # max number of bytes for buffered reading
 PRECISION = {'f':32,'d':64}
 (X,Y,Z,T) = (1,2,3,0) # the MDP index convetion, used intenrnally
+# Number spin components, color components
+NS = 4
+NC = 3
 
 def notify(*a):
     """
@@ -563,14 +566,13 @@ class PropagatorNumpy(QCDFormat):
         assert "data" in self.obj
         cPickle.dump(self.obj, self.file)
     def convert_from(self,other,target_precision = None,timeslice = None):
-        print "PropagatorNumpy converting..."
         (precision,nt,nx,ny,nz) = other.read_header()
         if timeslice is not None: nt = 1
         notify(' (precision: %s, size:%ix%ix%ix%i)' % (precision,nt,nx,ny,nz))
         self.write_header(target_precision or precision,nt,nx,ny,nz)
         pbar = ProgressBar(widgets = default_widgets, maxval = nt).start()
         for tind in xrange(nt):
-            if timeslice:
+            if timeslice is not None:
                 t = timeslice
             else:
                 t = tind
@@ -583,8 +585,65 @@ class PropagatorNumpy(QCDFormat):
                         self.obj["data"][tind,x,y,z,:] = [
                             np.complex(data[2*i], data[2*i+1]) for i in xrange(len(data)/2)]
             pbar.update(tind)
-            if timeslice: break
+            if timeslice is not None: break
         self.flush_data()
+        pbar.finish()
+
+
+class GaugePacked(QCDFormat):
+    site_order = [T,X,Y,Z]
+    
+    def __init__(self,filename):
+        self.filename = filename
+        self.base_size = 4*9
+        self.header_format = '<4ii'
+    def read_header(self):
+        self.file = open(self.filename, 'rb')
+        # header = self.file.read(struct.calcsize(self.header_format))
+        # nt,nx,ny,nz,self.site_size = struct.unpack(self.header_format,header)
+        # if self.site_size == self.base_size*4*2:
+        #     self.precision = 'f'
+        # elif self.site_size == self.base_size*8*2:
+        #     self.precision = 'd'
+        # else:
+        #     raise IOError, "file not in GaugePacked format"
+        self.precision = 'd' # GaugePacked always double precision
+        self.offset = self.file.tell()
+        self.size = (nt,nx,ny,nz)
+        return (self.precision,nt,nx,ny,nz)
+    def write_header(self,precision,nt,nx,ny,nz):
+        self.file = open(self.filename, 'wb')
+        self.site_size = self.base_size*(4*2 if precision == 'f' else 8*2)
+        # data = struct.pack(self.header_format,
+        #                    nt,nx,ny,nz,self.site_size)
+        # self.file.write(data)
+        self.size = (nt,nx,ny,nz)
+        self.precision = precision
+        assert self.precision == 'd', "GaugePacked must use double precision"
+        self.offset = self.file.tell()
+    def read_data(self,t,x,y,z):
+        raise RuntimeError, "Not supported yet"
+    def write_data(self,data,target_precision = None):
+        fmt = 'd'*self.base_size*2
+        if len(data) != self.base_size*2:
+            raise RuntimeError, "invalid data size"
+        return self.file.write(struct.pack(fmt, *data))
+    def convert_from(self, other, target_precision=None, timeslice=None):
+        (precision,nt,nx,ny,nz) = other.read_header()
+        notify('  (precision: %s, size: %ix%ix%ix%i)' % (precision,nt,nx,ny,nz))
+        self.write_header(target_precision or precision, nt,nx,ny,nz)
+        pbar = ProgressBar(widgets = default_widgets, maxval = self.size[0]).start()
+        for tind in xrange(nt):
+            if timeslice is not None:
+                t = timeslice
+            else:
+                t = tind
+            for x in xrange(nx):
+                for y in xrange(ny):
+                    for z in xrange(nz):
+                        self.write_data(other.read_data(t,x,y,z))
+            pbar.update(tind)
+            if timeslice is not None: break
         pbar.finish()
         
 
@@ -633,7 +692,7 @@ class GaugeNumpy(QCDFormat):
         self.write_header(target_precision or precision,nt,nx,ny,nz)
         pbar = ProgressBar(widgets = default_widgets, maxval = nt).start()
         for tind in xrange(nt):
-            if timeslice:
+            if timeslice is not None:
                 t = timeslice
             else:
                 t = tind
@@ -646,8 +705,61 @@ class GaugeNumpy(QCDFormat):
                         self.obj["data"][tind,x,y,z,:] = [
                             np.complex(data[2*i], data[2*i+1]) for i in xrange(len(data)/2)]
             pbar.update(tind)
-            if timeslice: break
+            if timeslice is not None: break
         self.flush_data()
+        pbar.finish()
+
+
+class PropagatorPacked(QCDFormat):
+    site_order = [T,X,Y,Z]
+    is_gauge = False
+    def __init__(self,filename):
+        self.filename = filename
+        self.base_size = 16*9
+    def read_header(self):
+        raise RuntimeError, "Reading PropagatorPacked not supported"
+    def write_header(self,precision,nt,nx,ny,nz):
+        self.file = open(self.filename, 'wb')
+        self.size = (nt,nx,ny,nz)
+        self.precision = precision
+        assert self.precision == 'd', "PropagatorPacked only supported double prec"
+    def read_data(self,t,x,y,z):
+        raise RuntimeError, "Reading PropagatorPacked not support"
+    def write_data(self,data,target_precision = None):
+        fmt = 'd'*self.base_size*2
+        if len(data) != self.base_size*2:
+            raise RuntimeError, "invalid data size"
+        return self.file.write(struct.pack(fmt, *data))
+    def convert_from(self, other, target_precision=None, timeslice=None):
+        (precision,nt,nx,ny,nz) = other.read_header()
+        if timeslice is not None: nt = 1
+        notify('  (precision: %s, size: %ix%ix%ix%i)' % (precision,nt,nx,ny,nz))
+        self.write_header(target_precision or precision, nt,nx,ny,nz)
+        pbar = ProgressBar(widgets = default_widgets, maxval = self.size[0]).start()
+        for tind in xrange(nt):
+            if timeslice is not None:
+                t = timeslice
+            else:
+                t = tind
+            for x in xrange(nx):
+                for y in xrange(ny):
+                    for z in xrange(nz):
+                        data = other.read_data(t,x,y,z)
+                        block = np.array([
+                            np.complex(data[2*i], data[2*i+1]) for i in xrange(len(data)/2)])
+                        block = block.reshape(NS, NS, NC, NC) # spin_src x spin_snk x col_src x col_snk
+                        block = block.swapaxes(1, 2) # convert to spin_src x col_src x spin_snk x col_snk
+                        vals = []
+                        for s_src in xrange(NS):
+                            for c_src in xrange(NC):
+                                for s_snk in xrange(NS):
+                                    for c_snk in xrange(NC):
+                                        elt = block[s_src, c_src, s_snk, c_snk]
+                                        vals.append(elt.real)
+                                        vals.append(elt.imag)
+                        self.write_data(vals)
+            pbar.update(tind)
+            if timeslice is not None: break
         pbar.finish()
         
 
@@ -918,17 +1030,19 @@ OPTIONS = {
     'mdp':(GaugeMDP,GaugeMDP,GaugeMILC,GaugeNERSC,GaugeILDG,GaugeSCIDAC),
     'ildg':(GaugeILDG,GaugeILDG,GaugeMILC,GaugeNERSC,GaugeMDP,GaugeSCIDAC),
     'np':(GaugeNumpy,GaugeILDG),
+    'dat':(GaugePacked,GaugeILDG),
     'prop.mdp':(PropagatorMDP,PropagatorMDP,PropagatorSCIDAC),
     'prop.ildg':(PropagatorSCIDAC,PropagatorSCIDAC,PropagatorMDP),
     'split.mdp':(GaugeMDPSplit,GaugeMDP,GaugeMILC,GaugeNERSC,GaugeILDG,GaugeSCIDAC),
     'split.prop.mdp':(PropagatorMDPSplit,PropagatorMDP,PropagatorSCIDAC),
     'prop.np':(PropagatorNumpy,PropagatorNumpy,PropagatorMDP,PropagatorSCIDAC),
+    'prop.dat':(PropagatorPacked,PropagatorSCIDAC,PropagatorMDP),
     }
 
-ALL = (GaugeNumpy,GaugeMDP,GaugeMILC,GaugeNERSC,GaugeILDG,GaugeSCIDAC,PropagatorMDP,PropagatorSCIDAC,PropagatorNumpy)
+ALL = (GaugePacked,GaugeNumpy,GaugeMDP,GaugeMILC,GaugeNERSC,GaugeILDG,GaugeSCIDAC,PropagatorMDP,PropagatorSCIDAC,PropagatorNumpy,PropagatorPacked)
 
 def universal_converter(path,target,precision,convert=True,
-                        timeslice=False):
+                        timeslice=None):
     print "universal_converter timeslice", timeslice
     filenames = [f for f in glob.glob(path) \
                      if not os.path.basename(f).startswith(CATALOG)]
@@ -944,7 +1058,9 @@ def universal_converter(path,target,precision,convert=True,
                 messages.append('trying to convert %s (%s)' %(filename,formatter.__name__))
             try:
                 if convert:
-                    ofilename = filename+(('.slice%d.' % (timeslice,)) if timeslice else '.')+target
+                    ofilename = filename+(
+                        ('.slice%d.' % (timeslice,)) if timeslice is not None
+                        else '.')+target
                     print "ofilename", ofilename, timeslice
                     if file_registered(ofilename):
                         notify('file %s already exists and is updated' % ofilename)
